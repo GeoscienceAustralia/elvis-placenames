@@ -1,0 +1,58 @@
+#!/bin/bash
+# Usage: copy this file to the instance and run it once, e.g. /bin/bash alt_deploy
+
+PROJECT_DIR=/home/ec2-user/elvis-placenames
+PLACENAMES_CONFIG_FILE_NAME=placenames.conf
+PROXY_FILE_NAME=proxies.conf
+HTTP_CONFIG_DIR=/etc/httpd/conf.d
+LOGROTATE_TARGET_DIR=/etc/logrotate.d
+APACHE_CONFIG_DIR=/home/ec2-user/apache-configuration
+GAZETTEER_DIR=/home/ec2-user/gazetteer
+ADMIN_LOG_SOURCE=$APACHE_CONFIG_DIR/config/logrotate/admin
+
+cd /home/ec2-user
+sudo yum update –y
+
+sudo curl --silent --location https://rpm.nodesource.com/setup_7.x | sudo bash -
+sudo yum -y install nodejs
+sudo yum install -y gcc-c++ make
+sudo yum install -y httpd
+sudo yum install -y git
+sudo npm install -g forever
+sudo npm install -g bower
+
+git clone https://github.com/GeoscienceAustralia/elvis-placenames
+cd $PROJECT_DIR
+
+# Application does not work after this commit
+git checkout -b before_token 000e1f6a6368c819aefe2ec769eb7bf418edd83f
+bower update
+sudo mkdir /var/www/placenames
+sudo cp -rf dist/* /var/www/placenames
+
+npm install aws-sdk
+npm install pg
+cd /home/ec2-user
+sudo amazon-linux-extras install -y java-openjdk11
+git clone https://github.com/GeoscienceAustralia/gazetteer.git
+cd $GAZETTEER_DIR/deploy/
+
+/bin/bash install
+
+crontab -l > temp_cron
+echo "0 1,5,14,23 * * * /bin/bash /home/ec2-user/gazetteer/deploy/schedule_provisioning" >> temp_cron
+echo "0 13 * * * /bin/bash /home/ec2-user/gazetteer/deploy/clean_deploy" >> temp_cron
+echo "15 13 * * * /bin/bash /home/ec2-user/elvis-placenames/deployment/build_reference_data" >> temp_cron
+crontab temp_cron
+rm temp_cron
+
+echo "Added crontab jobs"
+
+cd /home/ec2-user
+git clone https://github.com/GeoscienceAustralia/apache-configuration.git
+cd $APACHE_CONFIG_DIR/config
+
+sudo cp $PLACENAMES_CONFIG_FILE_NAME $PROXY_FILE_NAME $HTTP_CONFIG_DIR
+sudo cp $ADMIN_LOG_SOURCE $LOGROTATE_TARGET_DIR
+sudo systemctl enable httpd
+sudo systemctl start httpd
